@@ -1,7 +1,8 @@
 from openai import OpenAI
 import streamlit as st
 from streamlit_js_eval import streamlit_js_eval
-
+from ingestion import ingest
+from retrieval import retrieve
 st.set_page_config(page_title="Interview Simulator", page_icon="🤖")
 st.title("Interview Simulator")
 
@@ -15,6 +16,16 @@ if "messages" not in st.session_state:
     st.session_state["messages"] = []
 if "chat_completed" not in st.session_state:
     st.session_state["chat_completed"] = False
+if "HR_question" not in st.session_state:
+    st.session_state.HR_question = False
+
+# Initialize session state for HR chat
+if "hr_user_message_count" not in st.session_state:
+    st.session_state.hr_user_message_count = 0
+if "hr_chat_completed" not in st.session_state:
+    st.session_state["hr_chat_completed"] = False
+if "hr_messages" not in st.session_state:
+    st.session_state["hr_messages"] = []
 
 
 def complete_setup():
@@ -22,6 +33,8 @@ def complete_setup():
 
 def show_feedback():
     st.session_state.feedback_shown = True
+def hide_feedback():
+    st.session_state.feedback_shown = False
 
 if not st.session_state.setup_complete:
     st.subheader("Personal information", divider = "rainbow")
@@ -64,7 +77,7 @@ if not st.session_state.setup_complete:
 
 if st.session_state.setup_complete and not st.session_state.chat_completed and not st.session_state.feedback_shown:
 
-    st.info("You can change the personal information and company/position details by modifying the fields above.", icon="ℹ️")
+    # st.info("You can change the personal information and company/position details by modifying the fields above.", icon="ℹ️")
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
     if "openai_model" not in st.session_state:
@@ -115,11 +128,11 @@ if st.session_state.setup_complete and not st.session_state.chat_completed and n
     if st.session_state.user_message_count >= 5:
         st.session_state.chat_completed = True
 
-if st.session_state.chat_completed and not st.session_state.feedback_shown:
+if st.session_state.chat_completed and not st.session_state.feedback_shown and not st.session_state.HR_question:
     if st.button("Get Feedback", on_click=show_feedback):
         st.write("Fetching feedback!")
 
-if st.session_state.feedback_shown:
+if st.session_state.feedback_shown and not st.session_state.HR_question:
     st.subheader("Interview Feedback", divider = "rainbow")
     conversation_history = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages if msg['role'] != 'system'])
 
@@ -139,6 +152,50 @@ if st.session_state.feedback_shown:
     )
     st.write(feedback_response.choices[0].message.content)
 
+
     if st.button("Restart Interview", type="primary"):
         streamlit_js_eval(js_expressions="parent.window.location.reload()")
     
+    def _ask_hr_question():
+        st.session_state.HR_question = True
+        st.session_state.feedback_shown = False
+
+    st.button("Click here if you have a question?", on_click=_ask_hr_question)
+
+
+
+if st.session_state.HR_question:
+    st.subheader("Ask HR Question", divider = "rainbow")
+    ingest("HR_Policy_1.docx")
+
+    
+
+    if not st.session_state.hr_messages:
+        st.session_state.hr_messages = [{"role": "system", "content": f"""you are a helpful HR executive who is answering questions for an intervieweeabout HR policies of the company {st.session_state['company']}. 
+                                         Refer the company policies document while answering the questions. If you don't know the answer, simply state that you don't have that information.
+
+                                         """}]
+    for message in st.session_state.hr_messages:
+        if message["role"] != "system":
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+    if st.session_state.hr_user_message_count < 4:
+        if prompt := st.chat_input("Your question here:", max_chars=200):
+            st.session_state.hr_messages.append({"role": "user", "content": prompt})
+
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            
+            if st.session_state.hr_user_message_count < 4:
+                with st.chat_message("assistant"):
+                    response = retrieve(prompt)
+                    st.markdown(response)
+                st.session_state.hr_messages.append({"role": "assistant", "content": response})
+            st.session_state.hr_user_message_count += 1
+    if st.session_state.hr_user_message_count >= 4:
+        st.session_state.hr_chat_completed = True
+        
+    if st.button("Restart Interview", type="primary"):
+        streamlit_js_eval(js_expressions="parent.window.location.reload()")
